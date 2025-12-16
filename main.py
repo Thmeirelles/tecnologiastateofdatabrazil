@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
 import os
 import warnings
 import csv
@@ -858,26 +856,20 @@ if categoria_selecionada != 'Todas as Categorias':
     with col3:
         st.metric("Tecnologia Mais Usada", df_analise.iloc[0]['Tecnologia'] if len(df_analise) > 0 else "N/A")
 
-# Mostrar gráfico
+# Mostrar gráfico SEM Plotly (usando Streamlit nativo)
 if not df_analise.empty:
-    fig1 = px.bar(
-        df_analise,
-        x='Uso (%)',
-        y='Tecnologia',
-        orientation='h',
-        title=f'{titulo_analise}',
-        color='Uso (%)',
-        color_continuous_scale='Viridis',
-        text='Uso (%)',
-        height=max(400, len(df_analise) * 35)
+    # Criar gráfico de barras usando Streamlit nativo
+    st.subheader(f'{titulo_analise}')
+    
+    # Ordenar para o gráfico
+    df_grafico = df_analise.sort_values('Uso (%)', ascending=True)
+    
+    # Gráfico de barras com Streamlit
+    st.bar_chart(
+        df_grafico.set_index('Tecnologia')['Uso (%)'],
+        height=500,
+        use_container_width=True
     )
-    fig1.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-    fig1.update_layout(
-        yaxis={'categoryorder': 'total ascending'},
-        height=max(400, len(df_analise) * 35)
-    )
-    fig1 = configurar_grafico(fig1, max(400, len(df_analise) * 35))
-    st.plotly_chart(fig1, use_container_width=True)
     
     # Adicionar tabela de dados
     with st.expander("📋 Ver dados detalhados"):
@@ -957,26 +949,28 @@ if 'variavel_demografica' in locals() and 'tecnologia_demografica' in locals():
         df_grupo = df_grupo.dropna()
         df_grupo = df_grupo.sort_values('Uso (%)', ascending=False)
         
-        # Criar gráfico
+        # Criar gráfico usando Streamlit nativo
         if not df_grupo.empty:
-            fig3 = px.bar(
-                df_grupo,
-                x=variavel_demografica,
-                y='Uso (%)',
-                title=f'Uso de {tecnologia_demografica} por {variavel_demografica}',
-                color='Uso (%)',
-                color_continuous_scale='Purples',
-                text='Uso (%)'
+            st.subheader(f'Uso de {tecnologia_demografica} por {variavel_demografica}')
+            
+            # Gráfico de barras
+            st.bar_chart(
+                df_grupo.set_index(variavel_demografica)['Uso (%)'],
+                height=400,
+                use_container_width=True
             )
-            fig3.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-            fig3.update_layout(xaxis_tickangle=-45)
-            fig3 = configurar_grafico(fig3, 500)
-            st.plotly_chart(fig3, use_container_width=True)
+            
+            # Mostrar tabela
+            st.dataframe(
+                df_grupo,
+                use_container_width=True,
+                height=300
+            )
         else:
             st.warning(f"Não há dados disponíveis para {tecnologia_demografica} por {variavel_demografica}")
 
 # ============================================================================
-# SEÇÃO 4: CORRELAÇÃO ENTRE TECNOLOGIAS
+# SEÇÃO 4: CORRELAÇÃO ENTRE TECNOLOGIAS (simplificada)
 # ============================================================================
 st.header("🔗 CORRELAÇÃO ENTRE TECNOLOGIAS")
 
@@ -1014,19 +1008,28 @@ if len(techs_correlacao) >= 2:
         corr_matrix.columns = nomes_limpos
         corr_matrix.index = nomes_limpos
         
-        fig4 = px.imshow(
-            corr_matrix,
-            title='Matriz de Correlação entre Tecnologias',
-            color_continuous_scale='RdBu',
-            zmin=-1, zmax=1,
-            text_auto='.2f',
-            aspect='auto'
-        )
-        fig4 = configurar_grafico(fig4, 500)
-        st.plotly_chart(fig4, use_container_width=True)
+        # Mostrar matriz de correlação como tabela
+        st.subheader("Matriz de Correlação entre Tecnologias")
+        
+        # Formatar a tabela
+        styled_corr = corr_matrix.style.background_gradient(cmap='RdBu', vmin=-1, vmax=1)
+        st.dataframe(styled_corr.format("{:.2f}"), use_container_width=True, height=400)
+        
+        # Explicação
+        with st.expander("ℹ️ Sobre correlação"):
+            st.write("""
+            **Interpretação dos valores de correlação:**
+            - **1.0**: Correlação positiva perfeita
+            - **0.8 a 1.0**: Correlação positiva muito forte
+            - **0.6 a 0.8**: Correlação positiva forte
+            - **0.4 a 0.6**: Correlação positiva moderada
+            - **0.2 a 0.4**: Correlação positiva fraca
+            - **0.0 a 0.2**: Correlação muito fraca ou nula
+            - **Valores negativos**: Correlação negativa (quando uma aumenta, a outra diminui)
+            """)
 
 # ============================================================================
-# SEÇÃO 5: COMPARAÇÃO ENTRE GRUPOS
+# SEÇÃO 5: COMPARAÇÃO ENTRE GRUPOS (simplificada)
 # ============================================================================
 st.header("⚖️ COMPARAÇÃO ENTRE GRUPOS")
 
@@ -1074,18 +1077,21 @@ with tab1:
                 
                 if dados_senioridade:
                     df_senioridade_plot = pd.DataFrame(dados_senioridade)
-                    fig6 = px.bar(
-                        df_senioridade_plot,
-                        x='Tecnologia',
-                        y='Uso (%)',
-                        color='Senioridade',
-                        barmode='group',
-                        title='Comparação do Uso de Tecnologias por Senioridade (Júnior, Pleno e Sênior)',
-                        text='Uso (%)'
-                    )
-                    fig6.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-                    fig6 = configurar_grafico(fig6, 500)
-                    st.plotly_chart(fig6, use_container_width=True)
+                    
+                    # Mostrar como tabela
+                    st.subheader("Comparação do Uso de Tecnologias por Senioridade")
+                    
+                    # Reorganizar dados para melhor visualização
+                    pivot_table = df_senioridade_plot.pivot_table(
+                        index='Tecnologia', 
+                        columns='Senioridade', 
+                        values='Uso (%)'
+                    ).fillna(0)
+                    
+                    st.dataframe(pivot_table.style.format("{:.1f}%"), use_container_width=True)
+                    
+                    # Gráfico de barras agrupadas (Streamlit nativo)
+                    st.bar_chart(pivot_table, height=400, use_container_width=True)
                 else:
                     st.warning("Não há dados disponíveis para comparação por senioridade.")
         else:
@@ -1125,18 +1131,21 @@ with tab2:
             
             if dados_regiao:
                 df_regiao_plot = pd.DataFrame(dados_regiao)
-                fig7 = px.bar(
-                    df_regiao_plot,
-                    x='Tecnologia',
-                    y='Uso (%)',
-                    color='Região',
-                    barmode='group',
-                    title='Comparação do Uso de Tecnologias por Região',
-                    text='Uso (%)'
-                )
-                fig7.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-                fig7 = configurar_grafico(fig7, 500)
-                st.plotly_chart(fig7, use_container_width=True)
+                
+                # Mostrar como tabela
+                st.subheader("Comparação do Uso de Tecnologias por Região")
+                
+                # Reorganizar dados para melhor visualização
+                pivot_table = df_regiao_plot.pivot_table(
+                    index='Tecnologia', 
+                    columns='Região', 
+                    values='Uso (%)'
+                ).fillna(0)
+                
+                st.dataframe(pivot_table.style.format("{:.1f}%"), use_container_width=True)
+                
+                # Gráfico de barras agrupadas
+                st.bar_chart(pivot_table, height=400, use_container_width=True)
             else:
                 st.warning("Não há dados disponíveis para comparação por região.")
 
@@ -1174,18 +1183,21 @@ with tab3:
             
             if dados_ensino:
                 df_ensino_plot = pd.DataFrame(dados_ensino)
-                fig8 = px.bar(
-                    df_ensino_plot,
-                    x='Tecnologia',
-                    y='Uso (%)',
-                    color='Nível de Ensino',
-                    barmode='group',
-                    title='Comparação do Uso de Tecnologias por Nível de Ensino',
-                    text='Uso (%)'
-                )
-                fig8.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-                fig8 = configurar_grafico(fig8, 500)
-                st.plotly_chart(fig8, use_container_width=True)
+                
+                # Mostrar como tabela
+                st.subheader("Comparação do Uso de Tecnologias por Nível de Ensino")
+                
+                # Reorganizar dados para melhor visualização
+                pivot_table = df_ensino_plot.pivot_table(
+                    index='Tecnologia', 
+                    columns='Nível de Ensino', 
+                    values='Uso (%)'
+                ).fillna(0)
+                
+                st.dataframe(pivot_table.style.format("{:.1f}%"), use_container_width=True)
+                
+                # Gráfico de barras agrupadas
+                st.bar_chart(pivot_table, height=400, use_container_width=True)
             else:
                 st.warning("Não há dados disponíveis para comparação por nível de ensino.")
 
@@ -1239,6 +1251,10 @@ with st.expander("ℹ️ Sobre o agrupamento de tecnologias (ATUALIZADO)"):
     **Filtros:** 
     - Todos os filtros começam com TODAS as opções selecionadas por padrão
     - Isso facilita a exploração inicial dos dados
+    
+    **Nota sobre visualizações:**
+    - Esta versão usa gráficos nativos do Streamlit para compatibilidade com Streamlit Cloud
+    - Os dados e análises permanecem os mesmos, apenas a visualização foi simplificada
     
     **Outros agrupamentos mantidos:**
     
