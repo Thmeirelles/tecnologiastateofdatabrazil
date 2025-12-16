@@ -8,6 +8,8 @@ import warnings
 import csv
 import re
 from io import StringIO
+import requests
+from io import BytesIO
 warnings.filterwarnings('ignore')
 
 # Configuração da página
@@ -73,7 +75,7 @@ def consolidar_colunas_duplicadas(df):
     return df
 
 # ============================================================================
-# FUNÇÕES DE AGRUPAMENTO CORRIGIDAS - AGORA JUNTANDO SQL, DADOS RELACIONAIS E BANCOS RELACIONAIS
+# FUNÇÕES DE AGRUPAMENTO CORRIGIDAS
 # ============================================================================
 def calcular_uso_individual(df_filtrado, tech_columns):
     """Calcula uso individual de cada tecnologia sem agrupamento"""
@@ -225,72 +227,68 @@ def calcular_uso_com_grupos_unificado(df_filtrado, tech_columns):
     return df_agrupado
 
 # ============================================================================
-# FUNÇÃO PARA CARREGAR O DATASET COMPLETO COM CORREÇÕES
+# FUNÇÃO PARA CARREGAR O DATASET DO GITHUB
 # ============================================================================
 @st.cache_data
 def load_complete_dataset():
     """
     Carrega o dataset completo (2.645 linhas) com tratamento de erros
+    A partir do GitHub
     """
     try:
-        file_path = r"C:\Users\Pichau\OneDrive\Área de Trabalho\State of Data Brazil\Banco\State of Data Brazil 2021.csv"
+        # URL do dataset no GitHub (raw)
+        github_url = "https://raw.githubusercontent.com/Thmeirelles/tecnologiastateofdatabrazil/main/State%20of%20Data%20Brazil%202021.csv"
         
-        if not os.path.exists(file_path):
-            st.error(f"❌ Arquivo não encontrado: {file_path}")
-            return None, []
+        st.sidebar.info(f"📂 Carregando arquivo do GitHub...")
         
-        st.sidebar.info(f"📂 Carregando arquivo: {file_path}")
-        st.sidebar.info(f"📏 Tamanho do arquivo: {os.path.getsize(file_path) / 1024**2:.2f} MB")
-        
-        # MÉTODO 1: Tentar ler com engine python e tratamento de erros
+        # MÉTODO 1: Tentar ler diretamente do GitHub
         try:
             df = pd.read_csv(
-                file_path, 
+                github_url,
                 encoding='utf-8',
                 engine='python',
-                on_bad_lines='skip',  # Pular linhas com problemas
+                on_bad_lines='skip',
                 quoting=csv.QUOTE_MINIMAL,
                 sep=','
             )
-            st.sidebar.success(f"✅ Método 1: {len(df)} linhas carregadas")
+            st.sidebar.success(f"✅ Método GitHub: {len(df)} linhas carregadas")
         except Exception as e:
-            st.sidebar.warning(f"⚠️ Método 1 falhou: {str(e)[:50]}")
+            st.sidebar.warning(f"⚠️ Método GitHub falhou: {str(e)[:50]}")
             df = None
         
-        # MÉTODO 2: Se não carregou tudo, tentar com encoding latin-1
+        # MÉTODO 2: Tentar com requests se o método direto falhar
+        if df is None or len(df) < 2000:
+            try:
+                response = requests.get(github_url)
+                response.raise_for_status()
+                
+                # Ler o conteúdo do CSV
+                df = pd.read_csv(
+                    BytesIO(response.content),
+                    encoding='utf-8',
+                    engine='python',
+                    on_bad_lines='skip',
+                    sep=','
+                )
+                st.sidebar.success(f"✅ Método Requests: {len(df)} linhas carregadas")
+            except Exception as e:
+                st.sidebar.warning(f"⚠️ Método Requests falhou: {str(e)[:50]}")
+                df = None
+        
+        # MÉTODO 3: Tentar com encoding latin-1
         if df is None or len(df) < 2000:
             try:
                 df = pd.read_csv(
-                    file_path,
+                    github_url,
                     encoding='latin-1',
                     engine='python',
                     on_bad_lines='skip',
                     sep=','
                 )
-                st.sidebar.success(f"✅ Método 2: {len(df)} linhas carregadas")
+                st.sidebar.success(f"✅ Método Latin-1: {len(df)} linhas carregadas")
             except:
-                pass
-        
-        # MÉTODO 3: Ler linha por linha e limpar
-        if df is None or len(df) < 2000:
-            st.sidebar.info("🔄 Tentando método 3: leitura linha por linha...")
-            try:
-                lines = []
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    for i, line in enumerate(f):
-                        if i == 0:
-                            header = line.strip()
-                            lines.append(header)
-                        elif len(line.strip()) > 10:  # Ignorar linhas muito curtas
-                            lines.append(line.strip())
-                
-                # Tentar criar DataFrame a partir das linhas
-                if len(lines) > 0:
-                    data_string = '\n'.join(lines)
-                    df = pd.read_csv(StringIO(data_string), sep=',', engine='python')
-                    st.sidebar.success(f"✅ Método 3: {len(df)} linhas carregadas")
-            except Exception as e:
-                st.sidebar.error(f"❌ Método 3 falhou: {str(e)[:50]}")
+                st.sidebar.error("❌ Não foi possível carregar o dataset do GitHub")
+                return None, []
         
         if df is None:
             st.error("❌ Não foi possível carregar o dataset")
@@ -453,16 +451,18 @@ def load_complete_dataset():
             processed_df['regiao'] = processed_df['UF'].map(regioes)
             processed_df['regiao'] = processed_df['regiao'].fillna('Outros')
         
-        # Processar Senioridade
+        # Processar Senioridade - AGORA COM FILTRO PARA APENAS JÚNIOR, PLENO E SÊNIOR
         if 'Senioridade' in processed_df.columns:
             processed_df['Senioridade'] = processed_df['Senioridade'].astype(str).str.strip()
             
+            # Primeiro, tratar gestores
             if 'Gestor?' in processed_df.columns:
                 processed_df['Gestor?'] = pd.to_numeric(processed_df['Gestor?'], errors='coerce')
                 
                 mask_gestor = (processed_df['Senioridade'].isin(['nan', 'NaN', '', 'None', 'null'])) & (processed_df['Gestor?'] == 1)
                 processed_df.loc[mask_gestor, 'Senioridade'] = 'Gestor'
             
+            # Mapear variações comuns
             senioridade_map = {
                 'junior': 'Júnior',
                 'pleno': 'Pleno',
@@ -484,6 +484,7 @@ def load_complete_dataset():
                 mask = processed_df['Senioridade'].str.lower().str.contains(key, na=False)
                 processed_df.loc[mask, 'Senioridade'] = value
             
+            # Para valores que ainda são 'nan', substituir por 'Não informado'
             mask_nan = processed_df['Senioridade'].isin(['nan', 'NaN', '', 'None', 'null'])
             processed_df.loc[mask_nan, 'Senioridade'] = 'Não informado'
         
@@ -538,7 +539,19 @@ def calcular_uso_tecnologias(df_filtrado, tech_columns, usar_grupos=True):
         return calcular_uso_individual(df_filtrado, tech_columns)
 
 def categorizar_tecnologias(df_tech):
-    """Categoriza as tecnologias em grupos"""
+    """Categoriza as tecnologias em grupos COM LISTA FIXA DE LINGUAGENS DE PROGRAMAÇÃO"""
+    # Lista FIXA de linguagens de programação (apenas as que realmente são linguagens de programação)
+    linguagens_de_programacao = [
+        'Python', 'R', 'Java', 'Javascript', 'C/C++/C#', '.NET', 
+        'Julia', 'Scala', 'Matlab', 'PHP', 'Visual Basic/VBA'
+    ]
+    
+    # Lista de tecnologias que NÃO são linguagens de programação (para evitar confusão)
+    nao_linguagens = [
+        'SQL', 'SAS/Stata',  # SQL é linguagem de consulta, não de programação
+        'Não utilizo nenhuma linguagem'  # Esta é uma opção, não linguagem
+    ]
+    
     categorias = {
         'Linguagens de Programação': [],
         'Bancos de Dados': [],
@@ -551,37 +564,69 @@ def categorizar_tecnologias(df_tech):
     
     for _, row in df_tech.iterrows():
         tech = row['Tecnologia'].lower()
+        tech_original = row['Tecnologia']
         
-        # Verificar se é o grupo SQL unificado
+        # 1. Verificar se é o grupo SQL unificado
         if 'sql (linguagem, dados relacionais e bancos)' in tech:
             categorias['Bancos de Dados'].append(row['Tecnologia'])
-        # Outras categorizações
-        elif any(padrao in tech for padrao in ['python', 'r', 'java', 'javascript', 
-                                            'c++', 'c#', '.net', 'scala', 'julia', 'php',
-                                            'sas', 'stata', 'matlab', 'visual basic', 'vba']):
-            if not any(padrao in tech for padrao in ['banco', 'database', 'mysql', 'postgres', 'oracle']):
+            continue
+        
+        # 2. Verificar se é uma LINGUAGEM DE PROGRAMAÇÃO (lista fixa)
+        eh_linguagem = False
+        for linguagem in linguagens_de_programacao:
+            if linguagem.lower() in tech:
+                eh_linguagem = True
+                break
+        
+        if eh_linguagem:
+            # Verificar se não está na lista de não-linguagens
+            nao_eh_linguagem = False
+            for nao_ling in nao_linguagens:
+                if nao_ling.lower() in tech:
+                    nao_eh_linguagem = True
+                    break
+            
+            if not nao_eh_linguagem:
                 categorias['Linguagens de Programação'].append(row['Tecnologia'])
-        elif any(padrao in tech for padrao in ['mysql', 'postgres', 'oracle', 'mongodb',
+                continue
+        
+        # 3. Bancos de Dados (inclui NoSQL e outros)
+        if any(padrao in tech for padrao in ['mysql', 'postgres', 'oracle', 'mongodb',
                                               'redis', 'firebase', 'sql server', 'database',
                                               'cassandra', 'elasticsearch', 'sqlite', 'neo4j',
                                               'bigquery', 'snowflake', 'databricks', 'hbase',
                                               'hive', 'firebird', 'mariadb', 'db2', 'access',
-                                              'nosql', 'dados relacionais', 'banco']):
+                                              'nosql', 'banco']):
             categorias['Bancos de Dados'].append(row['Tecnologia'])
+            continue
+        
+        # 4. Cloud
         elif any(padrao in tech for padrao in ['aws', 'azure', 'google cloud', 'ibm',
                                               'cloud', 'oracle cloud', 'amazon']):
             categorias['Plataformas Cloud'].append(row['Tecnologia'])
+            continue
+        
+        # 5. Fontes de Dados
         elif any(padrao in tech for padrao in ['dados relacionais', 'nosql', 'imagens',
                                               'textos', 'documentos', 'vídeos', 'áudios',
                                               'planilhas', 'georreferenciados', 'fontes']):
             categorias['Fontes de Dados'].append(row['Tecnologia'])
+            continue
+        
+        # 6. Ferramentas BI
         elif any(padrao in tech for padrao in ['tableau', 'power bi', 'looker', 'qlik',
                                               'bi', 'visualização']):
             categorias['Ferramentas BI/Visualização'].append(row['Tecnologia'])
+            continue
+        
+        # 7. Big Data
         elif any(padrao in tech for padrao in ['spark', 'hadoop', 'kafka', 'presto',
                                               'databricks', 'snowflake', 'big data',
                                               'processamento']):
             categorias['Big Data/Processamento'].append(row['Tecnologia'])
+            continue
+        
+        # 8. Outras
         else:
             categorias['Outras Ferramentas'].append(row['Tecnologia'])
     
@@ -615,36 +660,10 @@ def configurar_grafico(fig, altura_minima=400):
     return fig
 
 # ============================================================================
-# VERIFICAÇÃO DO DATASET
-# ============================================================================
-st.sidebar.header("📂 VERIFICAÇÃO DO DATASET")
-
-if st.sidebar.button("🔍 Verificar integridade do arquivo"):
-    try:
-        file_path = r"C:\Users\Pichau\OneDrive\Área de Trabalho\State of Data Brazil\Banco\State of Data Brazil 2021.csv"
-        
-        if os.path.exists(file_path):
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                line_count = sum(1 for line in f)
-            
-            st.sidebar.info(f"📏 Linhas totais no arquivo: {line_count}")
-            
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                header = f.readline().strip()
-                st.sidebar.info(f"📝 Cabeçalho: {header[:100]}...")
-                
-                num_cols = len(header.split(','))
-                st.sidebar.info(f"🔢 Colunas no cabeçalho: {num_cols}")
-        else:
-            st.sidebar.error("❌ Arquivo não encontrado")
-    except Exception as e:
-        st.sidebar.error(f"❌ Erro na verificação: {str(e)}")
-
-# ============================================================================
 # CARREGAMENTO DOS DADOS
 # ============================================================================
 if 'df' not in st.session_state:
-    with st.spinner("Carregando dataset..."):
+    with st.spinner("Carregando dataset do GitHub..."):
         df, tech_columns = load_complete_dataset()
         if df is not None:
             st.session_state['df'] = df
@@ -659,49 +678,59 @@ df = st.session_state['df']
 tech_columns = st.session_state['tech_columns']
 
 # ============================================================================
-# FILTROS INTERATIVOS (SEM GÊNERO)
+# FILTROS INTERATIVOS (SEMPRE COM TODAS AS VARIÁVEIS SELECIONADAS)
 # ============================================================================
 st.sidebar.header("🔍 FILTROS DE ANÁLISE")
 
-# Filtro de idade (mantido)
+# Filtro de idade
 if 'Idade' in df.columns:
     idade_min = int(df['Idade'].min())
     idade_max = int(df['Idade'].max())
+    # Definir faixa padrão para cobrir todos
     idade_range = st.sidebar.slider(
         "Faixa de Idade", 
         idade_min, idade_max, 
-        (max(20, idade_min), min(60, idade_max))
+        (idade_min, idade_max)  # Todas as idades por padrão
     )
 
-# Filtro de UF (mantido)
+# Filtro de UF - TODAS SELECIONADAS POR PADRÃO
 if 'UF' in df.columns:
-    uf_opcoes = df['UF'].dropna().unique()
+    uf_opcoes = df['UF'].dropna().unique().tolist()
+    # Remover valores NaN se houver
+    uf_opcoes = [uf for uf in uf_opcoes if uf and str(uf) != 'nan' and str(uf) != 'None']
     ufs_selecionadas = st.sidebar.multiselect(
         "UF", 
         uf_opcoes, 
-        default=uf_opcoes[:min(5, len(uf_opcoes))]
+        default=uf_opcoes  # TODAS por padrão
     )
 
-# Filtro de senioridade - EXCLUIR "Não informado" dos filtros
+# Filtro de senioridade - TODAS SELECIONADAS POR PADRÃO
 if 'Senioridade' in df.columns:
-    senioridade_opcoes = [s for s in df['Senioridade'].dropna().unique() if s != 'Não informado']
+    # Filtrar para não incluir "Não informado" e "Gestor"
+    senioridade_opcoes = [s for s in df['Senioridade'].dropna().unique() 
+                         if s != 'Não informado' and s != 'Gestor' 
+                         and s in ['Júnior', 'Pleno', 'Sênior']]
+    # Remover valores NaN/None
+    senioridade_opcoes = [s for s in senioridade_opcoes if s and str(s) != 'nan' and str(s) != 'None']
     senioridades_selecionadas = st.sidebar.multiselect(
         "Senioridade", 
         senioridade_opcoes, 
-        default=senioridade_opcoes[:min(4, len(senioridade_opcoes))]
+        default=senioridade_opcoes  # TODAS por padrão
     )
 
-# Filtro de forma de trabalho (mantido)
+# Filtro de forma de trabalho - TODAS SELECIONADAS POR PADRÃO
 if 'Forma de trabalho' in df.columns:
-    forma_opcoes = df['Forma de trabalho'].dropna().unique()
+    forma_opcoes = df['Forma de trabalho'].dropna().unique().tolist()
+    # Remover valores NaN/None
+    forma_opcoes = [f for f in forma_opcoes if f and str(f) != 'nan' and str(f) != 'None']
     formas_selecionadas = st.sidebar.multiselect(
         "Forma de Trabalho", 
         forma_opcoes, 
-        default=forma_opcoes[:min(3, len(forma_opcoes))]
+        default=forma_opcoes  # TODAS por padrão
     )
 
 # ============================================================================
-# APLICAR FILTROS (SEM FILTRO DE GÊNERO)
+# APLICAR FILTROS
 # ============================================================================
 df_filtrado = df.copy()
 
@@ -711,14 +740,15 @@ if 'Idade' in df_filtrado.columns and 'idade_range' in locals():
         (df_filtrado['Idade'] <= idade_range[1])
     ]
 
-# FILTRO DE GÊNERO REMOVIDO
-
+# Aplicar filtro de UF apenas se houver seleção, senão usar todas
 if 'ufs_selecionadas' in locals() and ufs_selecionadas:
     df_filtrado = df_filtrado[df_filtrado['UF'].isin(ufs_selecionadas)]
 
+# Aplicar filtro de senioridade apenas se houver seleção, senão usar todas
 if 'senioridades_selecionadas' in locals() and senioridades_selecionadas:
     df_filtrado = df_filtrado[df_filtrado['Senioridade'].isin(senioridades_selecionadas)]
 
+# Aplicar filtro de forma de trabalho apenas se houver seleção, senão usar todas
 if 'formas_selecionadas' in locals() and formas_selecionadas:
     df_filtrado = df_filtrado[df_filtrado['Forma de trabalho'].isin(formas_selecionadas)]
 
@@ -747,7 +777,8 @@ with col2:
 
 with col3:
     if 'Senioridade' in df_filtrado.columns:
-        senior_counts = df_filtrado[df_filtrado['Senioridade'] != 'Não informado']['Senioridade'].value_counts()
+        # Filtrar apenas Júnior, Pleno e Sênior para a métrica
+        senior_counts = df_filtrado[df_filtrado['Senioridade'].isin(['Júnior', 'Pleno', 'Sênior'])]['Senioridade'].value_counts()
         if not senior_counts.empty:
             st.metric("SENIORIDADE PRINCIPAL", senior_counts.index[0])
         else:
@@ -760,16 +791,16 @@ with col4:
             st.metric("REGIÃO PRINCIPAL", regiao_counts.index[0])
 
 # ============================================================================
-# SEÇÃO 2: TOP TECNOLOGIAS MAIS UTILIZADAS (COM SQL UNIFICADO)
+# SEÇÃO 2: ANÁLISE DETALHADA POR CATEGORIA
 # ============================================================================
-st.header("🏆 TOP TECNOLOGIAS MAIS UTILIZADAS")
+st.header("📊 ANÁLISE DETALHADA POR CATEGORIA")
 
 # Adicionar informação sobre o novo agrupamento SQL
 st.info("""
 **Novo agrupamento SQL:** 
 - **SQL (linguagem)** + **Dados relacionais (fonte)** + **Bancos relacionais (MySQL, PostgreSQL, etc.)** = **Grupo SQL unificado**
 - Este grupo representa pessoas que usam PELO MENOS UMA dessas tecnologias relacionais
-- **Resultado esperado:** Grupo SQL deve aparecer com uso muito alto (provavelmente >80%)
+- **Linguagens de Programação:** Apenas tecnologias que são realmente linguagens de programação (Python, R, Java, etc.)
 """)
 
 usar_grupos = st.checkbox("Agrupar tecnologias similares (SQL unificado, AWS, NoSQL, etc.)", value=True)
@@ -781,32 +812,10 @@ if df_tech is None or df_tech.empty:
     st.error("Não foi possível calcular o uso de tecnologias. Verifique os dados.")
     st.stop()
 
-# Categorizar tecnologias
+# Categorizar tecnologias (com a nova lógica para linguagens de programação)
 categorias = categorizar_tecnologias(df_tech)
 
-# Top 10 geral - AGORA COM SQL UNIFICADO
-st.subheader("Top 10 - Todas as Tecnologias")
-df_top10 = df_tech.sort_values('Uso (%)', ascending=False).head(10)
-
-fig1 = px.bar(
-    df_top10,
-    x='Uso (%)',
-    y='Tecnologia',
-    orientation='h',
-    title='Top 10 Tecnologias Mais Utilizadas (%)' + (' - Com Agrupamentos' if usar_grupos else ' - Sem Agrupamentos'),
-    color='Uso (%)',
-    color_continuous_scale='Viridis',
-    text='Uso (%)'
-)
-fig1.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-fig1.update_layout(
-    yaxis={'categoryorder': 'total ascending'},
-    height=500
-)
-fig1 = configurar_grafico(fig1, 500)
-st.plotly_chart(fig1, use_container_width=True)
-
-# Mostrar estatísticas do grupo SQL unificado
+# Mostrar estatísticas do grupo SQL unificado (se estiver usando grupos)
 if usar_grupos:
     sql_grupo = df_tech[df_tech['Tecnologia'].str.contains('SQL (linguagem, dados relacionais e bancos)', case=False, na=False)]
     if not sql_grupo.empty:
@@ -821,59 +830,7 @@ if usar_grupos:
         - **Interpretação:** {uso_sql_grupo:.1f}% dos profissionais usam pelo menos uma tecnologia relacionada a SQL
         """)
 
-# ============================================================================
-# SEÇÃO 3: TOP POR CATEGORIA
-# ============================================================================
-st.subheader("📊 Top por Categoria")
-
 # Seletor de categoria
-categorias_disponiveis = ['Todas'] + list(categorias.keys())
-categoria_selecionada_top = st.selectbox(
-    "Selecione uma categoria para ver o top:",
-    categorias_disponiveis,
-    key='top_categoria'
-)
-
-if categoria_selecionada_top == 'Todas':
-    df_categoria_top = df_tech.copy()
-    titulo_categoria = "Top Tecnologias - Todas as Categorias"
-else:
-    techs_categoria = [t for t in df_tech['Tecnologia'] if t in categorias[categoria_selecionada_top]]
-    df_categoria_top = df_tech[df_tech['Tecnologia'].isin(techs_categoria)]
-    titulo_categoria = f"Top Tecnologias - {categoria_selecionada_top}"
-
-# Ordenar e limitar a 10
-df_categoria_top = df_categoria_top.sort_values('Uso (%)', ascending=False).head(10)
-
-if not df_categoria_top.empty:
-    fig_categoria = px.bar(
-        df_categoria_top,
-        x='Uso (%)',
-        y='Tecnologia',
-        orientation='h',
-        title=titulo_categoria,
-        color='Uso (%)',
-        color_continuous_scale='Blues',
-        text='Uso (%)'
-    )
-    fig_categoria.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-    fig_categoria.update_layout(
-        height=max(400, len(df_categoria_top) * 35),
-        yaxis={'categoryorder': 'total ascending'}
-    )
-    fig_categoria = configurar_grafico(fig_categoria, max(400, len(df_categoria_top) * 35))
-    st.plotly_chart(fig_categoria, use_container_width=True)
-else:
-    st.warning(f"Nenhuma tecnologia encontrada na categoria {categoria_selecionada_top}")
-
-# ============================================================================
-# SEÇÃO 4: ANÁLISE DETALHADA POR CATEGORIA
-# ============================================================================
-st.header("📊 ANÁLISE DETALHADA POR CATEGORIA")
-
-if usar_grupos:
-    st.info("ℹ️ **Tecnologias similares estão agrupadas** (SQL unificado, AWS, NoSQL, etc.)")
-
 categoria_selecionada = st.selectbox(
     "Selecione uma categoria para análise detalhada:",
     ['Todas as Categorias'] + list(categorias.keys()),
@@ -882,14 +839,14 @@ categoria_selecionada = st.selectbox(
 
 if categoria_selecionada == 'Todas as Categorias':
     df_analise = df_tech.copy()
-    titulo_analise = 'Todas as Tecnologias'
+    titulo_analise = 'Top Tecnologias - Todas as Categorias'
 else:
     techs_categoria = [t for t in df_tech['Tecnologia'] if t in categorias[categoria_selecionada]]
     df_analise = df_tech[df_tech['Tecnologia'].isin(techs_categoria)]
-    titulo_analise = f'{categoria_selecionada}'
+    titulo_analise = f'Top Tecnologias - {categoria_selecionada}'
 
-# Ordenar por uso
-df_analise = df_analise.sort_values('Uso (%)', ascending=False)
+# Ordenar por uso e pegar top 10
+df_analise = df_analise.sort_values('Uso (%)', ascending=False).head(10)
 
 # Mostrar estatísticas da categoria
 if categoria_selecionada != 'Todas as Categorias':
@@ -903,25 +860,24 @@ if categoria_selecionada != 'Todas as Categorias':
 
 # Mostrar gráfico
 if not df_analise.empty:
-    fig2 = px.bar(
-        df_analise.head(20),
+    fig1 = px.bar(
+        df_analise,
         x='Uso (%)',
         y='Tecnologia',
         orientation='h',
-        title=f'Uso de Tecnologias - {titulo_analise}',
+        title=f'{titulo_analise}',
         color='Uso (%)',
-        color_continuous_scale='Plasma',
+        color_continuous_scale='Viridis',
         text='Uso (%)',
-        height=max(500, len(df_analise.head(20)) * 30)
+        height=max(400, len(df_analise) * 35)
     )
-    fig2.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
-    fig2.update_layout(
+    fig1.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+    fig1.update_layout(
         yaxis={'categoryorder': 'total ascending'},
-        uniformtext_minsize=8,
-        uniformtext_mode='hide'
+        height=max(400, len(df_analise) * 35)
     )
-    fig2 = configurar_grafico(fig2, max(500, len(df_analise.head(20)) * 30))
-    st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': True})
+    fig1 = configurar_grafico(fig1, max(400, len(df_analise) * 35))
+    st.plotly_chart(fig1, use_container_width=True)
     
     # Adicionar tabela de dados
     with st.expander("📋 Ver dados detalhados"):
@@ -934,29 +890,34 @@ else:
     st.warning(f"Nenhuma tecnologia encontrada na categoria {categoria_selecionada}")
 
 # ============================================================================
-# SEÇÃO 5: ANÁLISE POR PERFIL DEMOGRÁFICO (SEM FILTRO DE GÊNERO)
+# SEÇÃO 3: ANÁLISE POR PERFIL
 # ============================================================================
-st.header("👥 ANÁLISE POR PERFIL DEMOGRÁFICO")
+st.header("👥 ANÁLISE POR PERFIL")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    # Seletor de variável demográfica - MANTÉM GÊNERO PARA ANÁLISE, MAS SEM FILTRO
+    # Seletor de variável
     variaveis_disp = []
     for var in ['Gênero', 'faixa_etaria', 'UF', 'regiao', 'Senioridade', 
                 'Nível de Ensino', 'Área de Formação', 'Forma de trabalho', 'Atuação']:
         if var in df_filtrado.columns:
             if var == 'Senioridade':
-                valores_unicos = df_filtrado[df_filtrado['Senioridade'] != 'Não informado'][var].unique()
+                # Para Senioridade, mostrar apenas Júnior, Pleno e Sênior
+                valores_unicos = [s for s in df_filtrado['Senioridade'].unique() 
+                                if s in ['Júnior', 'Pleno', 'Sênior']]
             else:
                 valores_unicos = df_filtrado[var].unique()
+            
+            # Remover valores NaN/None
+            valores_unicos = [v for v in valores_unicos if v and str(v) != 'nan' and str(v) != 'None']
             
             if len(valores_unicos) > 1:
                 variaveis_disp.append(var)
     
     if variaveis_disp:
         variavel_demografica = st.selectbox(
-            "Selecione a variável demográfica:",
+            "Selecione a variável:",
             variaveis_disp
         )
 
@@ -984,7 +945,8 @@ if 'variavel_demografica' in locals() and 'tecnologia_demografica' in locals():
     if coluna_original and coluna_original in df_filtrado.columns:
         # Calcular uso por grupo
         if variavel_demografica == 'Senioridade':
-            df_temp = df_filtrado[df_filtrado['Senioridade'] != 'Não informado']
+            # Filtrar apenas Júnior, Pleno e Sênior
+            df_temp = df_filtrado[df_filtrado['Senioridade'].isin(['Júnior', 'Pleno', 'Sênior'])]
         else:
             df_temp = df_filtrado
         
@@ -1014,7 +976,7 @@ if 'variavel_demografica' in locals() and 'tecnologia_demografica' in locals():
             st.warning(f"Não há dados disponíveis para {tecnologia_demografica} por {variavel_demografica}")
 
 # ============================================================================
-# SEÇÃO 6: CORRELAÇÃO ENTRE TECNOLOGIAS
+# SEÇÃO 4: CORRELAÇÃO ENTRE TECNOLOGIAS
 # ============================================================================
 st.header("🔗 CORRELAÇÃO ENTRE TECNOLOGIAS")
 
@@ -1064,7 +1026,7 @@ if len(techs_correlacao) >= 2:
         st.plotly_chart(fig4, use_container_width=True)
 
 # ============================================================================
-# SEÇÃO 7: COMPARAÇÃO ENTRE GRUPOS
+# SEÇÃO 5: COMPARAÇÃO ENTRE GRUPOS
 # ============================================================================
 st.header("⚖️ COMPARAÇÃO ENTRE GRUPOS")
 
@@ -1073,9 +1035,13 @@ tab1, tab2, tab3 = st.tabs(["📊 Senioridade", "🌎 Região", "🎓 Nível de 
 
 with tab1:
     if 'Senioridade' in df_filtrado.columns:
-        senioridades_validas = [s for s in df_filtrado['Senioridade'].unique() if s != 'Não informado']
+        # USAR APENAS JÚNIOR, PLENO E SÊNIOR - EXCLUIR GESTOR
+        senioridades_validas = ['Júnior', 'Pleno', 'Sênior']
         
-        if len(senioridades_validas) > 1:
+        # Verificar se há dados para essas senioridades
+        senioridades_disponiveis = [s for s in senioridades_validas if s in df_filtrado['Senioridade'].unique()]
+        
+        if len(senioridades_disponiveis) >= 2:
             techs_senioridade = st.multiselect(
                 "Selecione tecnologias para comparar por senioridade:",
                 df_tech.sort_values('Uso (%)', ascending=False)['Tecnologia'].head(10).tolist(),
@@ -1096,7 +1062,7 @@ with tab1:
                             break
                     
                     if col_original and col_original in df_filtrado.columns:
-                        for senior in senioridades_validas:
+                        for senior in senioridades_disponiveis:
                             mask = df_filtrado['Senioridade'] == senior
                             uso = df_filtrado.loc[mask, col_original].mean() * 100
                             if pd.notna(uso):
@@ -1114,7 +1080,7 @@ with tab1:
                         y='Uso (%)',
                         color='Senioridade',
                         barmode='group',
-                        title='Comparação do Uso de Tecnologias por Senioridade',
+                        title='Comparação do Uso de Tecnologias por Senioridade (Júnior, Pleno e Sênior)',
                         text='Uso (%)'
                     )
                     fig6.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
@@ -1123,7 +1089,7 @@ with tab1:
                 else:
                     st.warning("Não há dados disponíveis para comparação por senioridade.")
         else:
-            st.info("Não há dados suficientes de senioridade para comparação.")
+            st.info("Não há dados suficientes de senioridade (Júnior, Pleno, Sênior) para comparação.")
 
 with tab2:
     if 'regiao' in df_filtrado.columns and df_filtrado['regiao'].nunique() > 1:
@@ -1224,7 +1190,7 @@ with tab3:
                 st.warning("Não há dados disponíveis para comparação por nível de ensino.")
 
 # ============================================================================
-# SEÇÃO DE INFORMAÇÕES SOBRE AGRUPAMENTOS ATUALIZADA
+# SEÇÃO DE INFORMAÇÕES SOBRE AGRUPAMENTOS
 # ============================================================================
 with st.expander("ℹ️ Sobre o agrupamento de tecnologias (ATUALIZADO)"):
     st.markdown("""
@@ -1247,10 +1213,32 @@ with st.expander("ℹ️ Sobre o agrupamento de tecnologias (ATUALIZADO)"):
       - Microsoft Access
       - Sybase
     
-    **Por que agrupar?**
-    - Todos estão relacionados ao ecossistema SQL
-    - Representa profissionais que trabalham com dados relacionais
-    - Evita duplicação na análise (uma pessoa que usa MySQL provavelmente também usa SQL)
+    **Linguagens de Programação (lista revisada):**
+    Apenas tecnologias que são realmente linguagens de programação:
+    - Python
+    - R
+    - Java
+    - JavaScript
+    - C/C++/C#
+    - .NET
+    - Julia
+    - Scala
+    - Matlab
+    - PHP
+    - Visual Basic/VBA
+    
+    **NÃO são consideradas linguagens de programação:**
+    - SQL (é linguagem de consulta)
+    - SAS/Stata (são ambientes estatísticos)
+    - "Não utilizo nenhuma linguagem" (é uma opção)
+    
+    **Senioridade:** 
+    - Apenas Júnior, Pleno e Sênior são incluídos nas análises
+    - Gestor foi excluído para evitar distorções
+    
+    **Filtros:** 
+    - Todos os filtros começam com TODAS as opções selecionadas por padrão
+    - Isso facilita a exploração inicial dos dados
     
     **Outros agrupamentos mantidos:**
     
@@ -1290,10 +1278,6 @@ with st.expander("ℹ️ Sobre o agrupamento de tecnologias (ATUALIZADO)"):
     ### Como funciona o cálculo de grupos:
     Quando o agrupamento está ativado, o percentual mostra o uso de **pelo menos uma tecnologia** do grupo.
     Ex: Se alguém usa MySQL e PostgreSQL, conta apenas uma vez para "SQL Unificado".
-    
-    ### Filtro de gênero removido:
-    - O filtro de gênero foi removido da barra lateral para simplificar a interface
-    - A análise por gênero ainda está disponível na seção "ANÁLISE POR PERFIL DEMOGRÁFICO"
     """)
 
 # ============================================================================
